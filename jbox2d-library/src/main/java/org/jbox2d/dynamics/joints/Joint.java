@@ -65,6 +65,8 @@ public abstract class Joint {
         return new RopeJoint(world.getPool(), (RopeJointDef) def);
       case MOTOR:
         return new MotorJoint(world.getPool(), (MotorJointDef) def);
+      case LINE:
+          return new LineJoint(world.getPool(), (LineJointDef) def);
       case UNKNOWN:
       default:
         return null;
