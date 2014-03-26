@@ -40,6 +40,7 @@ import org.jbox2d.testbed.tests.ContinuousTest;
 import org.jbox2d.testbed.tests.ConvexHull;
 import org.jbox2d.testbed.tests.ConveyorBelt;
 import org.jbox2d.testbed.tests.DamBreak;
+import org.jbox2d.testbed.tests.DeadParticle;
 import org.jbox2d.testbed.tests.DistanceTest;
 import org.jbox2d.testbed.tests.DominoTest;
 import org.jbox2d.testbed.tests.DominoTower;
@@ -49,10 +50,12 @@ import org.jbox2d.testbed.tests.EdgeShapes;
 import org.jbox2d.testbed.tests.FixedPendulumTest;
 import org.jbox2d.testbed.tests.FreePendulumTest;
 import org.jbox2d.testbed.tests.Gears;
+import org.jbox2d.testbed.tests.LinearResistance;
 import org.jbox2d.testbed.tests.LiquidTimer;
 import org.jbox2d.testbed.tests.MotorTest;
 import org.jbox2d.testbed.tests.OneSidedTest;
 import org.jbox2d.testbed.tests.Particles;
+import org.jbox2d.testbed.tests.PathofLeastResistance;
 import org.jbox2d.testbed.tests.PistonTest;
 import org.jbox2d.testbed.tests.PolyShapes;
 import org.jbox2d.testbed.tests.PrismaticTest;
@@ -61,6 +64,7 @@ import org.jbox2d.testbed.tests.PyramidTest;
 import org.jbox2d.testbed.tests.RayCastTest;
 import org.jbox2d.testbed.tests.RevoluteTest;
 import org.jbox2d.testbed.tests.RopeTest;
+import org.jbox2d.testbed.tests.RotatingWheels;
 import org.jbox2d.testbed.tests.SensorTest;
 import org.jbox2d.testbed.tests.ShapeEditing;
 import org.jbox2d.testbed.tests.SliderCrankTest;
@@ -153,5 +157,10 @@ public class TestList {
     model.addTest(new ConvexHull());
     model.addTest(new DynamicTreeTest());
     model.addTest(new DistanceTest());
-  }
+    model.addTest(new PathofLeastResistance());
+    model.addTest(new LinearResistance());
+    
+    model.addCategory("Bug");
+    model.addTest(new DeadParticle());
+    model.addTest(new RotatingWheels());  }
 }
