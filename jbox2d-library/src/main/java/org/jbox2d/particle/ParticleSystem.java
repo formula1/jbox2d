@@ -290,6 +290,7 @@ public class ParticleSystem {
       }
       final float upperBoundY = aabb.upperBound.y;
       final float upperBoundX = aabb.upperBound.x;
+      if(stride == 0) throw new Error("293 div 0");
       for (float y = MathUtils.floor(aabb.lowerBound.y / stride) * stride; y < upperBoundY; y +=
           stride) {
         for (float x = MathUtils.floor(aabb.lowerBound.x / stride) * stride; x < upperBoundX; x +=
@@ -552,6 +553,7 @@ public class ParticleSystem {
         m_contactCapacity = newCapacity;
       }
       float invD = MathUtils.sqrt(1 / d2);
+      if(Float.isNaN(invD)) throw new Error("oh dear");
       ParticleContact contact = m_contactBuffer[m_contactCount];
       contact.indexA = a;
       contact.indexB = b;
@@ -559,6 +561,7 @@ public class ParticleSystem {
       contact.weight = 1 - d2 * invD * m_inverseDiameter;
       contact.normal.x = invD * dx;
       contact.normal.y = invD * dy;
+//      System.out.println("w: "+contact.weight+", n.x: "+contact.normal.x+", n.y: "+contact.normal.y);
       m_contactCount++;
     }
   }
@@ -693,14 +696,21 @@ public class ParticleSystem {
     float criticalVelocytySquared = getCriticalVelocitySquared(step);
     for (int i = 0; i < m_count; i++) {
       Vec2 v = m_velocityBuffer.data[i];
+      boolean initx = Float.isNaN(v.x);
+      boolean inity = Float.isNaN(v.y);
+
       v.x += gravityx;
       v.y += gravityy;
       float v2 = v.x * v.x + v.y * v.y;
+      if(v2 == 0) throw new Error("705 div 0");
       if (v2 > criticalVelocytySquared) {
         float a = MathUtils.sqrt(criticalVelocytySquared / v2);
         v.x *= a;
         v.y *= a;
       }
+      if(!initx && Float.isNaN(v.x)) throw new Error("707");
+      if(!inity && Float.isNaN(v.y)) throw new Error("707");
+
     }
     solveCollision(step);
     if ((m_allGroupFlags & ParticleGroupType.b2_rigidParticleGroup) != 0) {
@@ -781,6 +791,7 @@ public class ParticleSystem {
       m_accumulationBuffer[i] = h;
     }
     // applies pressure between each particles in contact
+    if(m_density * m_particleDiameter == 0) throw new Error("794 div 0");
     float velocityPerPressure = step.dt / (m_density * m_particleDiameter);
     for (int k = 0; k < m_bodyContactCount; k++) {
       ParticleBodyContact contact = m_bodyContactBuffer[k];
@@ -797,26 +808,45 @@ public class ParticleSystem {
       f.y = coef * n.y;
       final Vec2 velData = m_velocityBuffer.data[a];
       final float particleInvMass = getParticleInvMass();
+      boolean initx = Float.isNaN(velData.x);
+      boolean inity = Float.isNaN(velData.y);
+
       velData.x -= particleInvMass * f.x;
       velData.y -= particleInvMass * f.y;
+      if(!initx && Float.isNaN(velData.x)) throw new Error("811");
+      if(!inity && Float.isNaN(velData.y)) throw new Error("811");
       b.applyLinearImpulse(f, p, true);
     }
+    String errored = "";
+    int numer = 0;
+    int numskips = 0;
+    boolean error = false;
     for (int k = 0; k < m_contactCount; k++) {
       ParticleContact contact = m_contactBuffer[k];
       int a = contact.indexA;
       int b = contact.indexB;
       float w = contact.weight;
       Vec2 n = contact.normal;
-      float h = m_accumulationBuffer[a] + m_accumulationBuffer[b];
-      final float fx = velocityPerPressure * w * h * n.x;
+      float h = m_accumulationBuffer[a] + m_accumulationBuffer[b]; //no prob
+      final float fx = velocityPerPressure * w * h * n.x; //vpp no prob
       final float fy = velocityPerPressure * w * h * n.y;
       final Vec2 velDataA = m_velocityBuffer.data[a];
       final Vec2 velDataB = m_velocityBuffer.data[b];
+      boolean initx = Float.isNaN(velDataA.x);
+      boolean inity = Float.isNaN(velDataA.y);
+
       velDataA.x -= fx;
       velDataA.y -= fy;
       velDataB.x += fx;
       velDataB.y += fy;
+      if(!initx && Float.isNaN(velDataA.x)){
+          System.out.println("1: count: "+m_contactCount+", k: "+k+", w: "+w+", n.x: "+n.x+", n.y: "+n.y);
+          numer++;
+          error = true;
+      }else if(numer > 0) numskips++;
+//      if(!inity && Float.isNaN(velDataA.y)) throw new Error("833");
     }
+    if(error) throw new Error("total: "+m_contactCount+", errors: "+numer+", num skips: "+numskips);
   }
 
   void solveDamping(TimeStep step) {
@@ -843,8 +873,13 @@ public class ParticleSystem {
         f.x = damping * w * m * vn * n.x;
         f.y = damping * w * m * vn * n.y;
         final float invMass = getParticleInvMass();
+        boolean initx = Float.isNaN(velA.x);
+        boolean inity = Float.isNaN(velA.y);
+
         velA.x += invMass * f.x;
         velA.y += invMass * f.y;
+        if(!initx && Float.isNaN(velA.x)) throw new Error("867");
+        if(!inity && Float.isNaN(velA.y)) throw new Error("867");
         f.x = -f.x;
         f.y = -f.y;
         b.applyLinearImpulse(f, p, true);
@@ -858,6 +893,9 @@ public class ParticleSystem {
       Vec2 n = contact.normal;
       final Vec2 velA = m_velocityBuffer.data[a];
       final Vec2 velB = m_velocityBuffer.data[b];
+      boolean initx = Float.isNaN(velA.x);
+      boolean inity = Float.isNaN(velA.y);
+
       final float vx = velB.x - velA.x;
       final float vy = velB.y - velA.y;
       float vn = vx * n.x + vy * n.y;
@@ -869,6 +907,8 @@ public class ParticleSystem {
         velB.x -= fx;
         velB.y -= fy;
       }
+      if(!initx && Float.isNaN(velA.x)) throw new Error("896");
+      if(!inity && Float.isNaN(velA.y)) throw new Error("896");
     }
   }
 
@@ -932,6 +972,7 @@ public class ParticleSystem {
         float rs = Vec2.cross(oa, pa) + Vec2.cross(ob, pb) + Vec2.cross(oc, pc);
         float rc = Vec2.dot(oa, pa) + Vec2.dot(ob, pb) + Vec2.dot(oc, pc);
         float r2 = rs * rs + rc * rc;
+        if(r2 == 0) throw new Error("div 0");
         float invR = MathUtils.sqrt(1f / r2);
         rs *= invR;
         rc *= invR;
@@ -969,14 +1010,18 @@ public class ParticleSystem {
         float r0 = pair.distance;
         float r1 = MathUtils.sqrt(dx * dx + dy * dy);
         float strength = springStrength * pair.strength;
-        final float fx = strength * (r0 - r1) / r1 * dx;
-        final float fy = strength * (r0 - r1) / r1 * dy;
+        final float fx = (dx==0)?0:strength * (r0 - r1) / r1 * dx;
+        final float fy = (dy==0)?0:strength * (r0 - r1) / r1 * dy;
         final Vec2 va = m_velocityBuffer.data[a];
         final Vec2 vb = m_velocityBuffer.data[b];
+        boolean initx = Float.isNaN(va.x);
+        boolean inity = Float.isNaN(va.y);
         va.x -= fx;
         va.y -= fy;
         vb.x += fx;
         vb.y += fy;
+        if(!initx && Float.isNaN(va.x)) throw new Error("981");
+        if(!inity && Float.isNaN(va.y)) throw new Error("981");
       }
     }
   }
@@ -1689,6 +1734,8 @@ public class ParticleSystem {
       float determinant = pv * pv - v2 * (p2 - m_squaredDiameter);
       if (determinant >= 0) {
         float sqrtDeterminant = MathUtils.sqrt(determinant);
+        if(Float.isNaN(sqrtDeterminant)) throw new Error("nan");
+        if(v2 == 0) throw new Error("1729 div 0");
         // find a solution between 0 and fraction
         float t = (-pv - sqrtDeterminant) / v2;
         if (t > fraction) {
@@ -1725,12 +1772,16 @@ public class ParticleSystem {
       Vec2 n = contact.normal;
       final Vec2 va = m_velocityBuffer.data[a];
       final Vec2 vb = m_velocityBuffer.data[b];
+      boolean initx = Float.isNaN(va.x);
+      boolean inity = Float.isNaN(va.y);
       final float vx = vb.x - va.x;
       final float vy = vb.y - va.y;
       float vn = vx * n.x + vy * n.y;
       if (vn < 0) {
         sum_v2 += vn * vn;
       }
+      if(!initx && Float.isNaN(va.x)) throw new Error("1741");
+      if(!inity && Float.isNaN(va.y)) throw new Error("1741");
     }
     return 0.5f * getParticleMass() * sum_v2;
   }
@@ -2045,6 +2096,7 @@ public class ParticleSystem {
               contact.weight = 1 - d * system.m_inverseDiameter;
               contact.normal.x = -n.x;
               contact.normal.y = -n.y;
+              if((invAm + invBm + invBI * rpn * rpn) == 0) throw new Error("2090 div 0");
               contact.mass = 1 / (invAm + invBm + invBI * rpn * rpn);
               system.m_bodyContactCount++;
             }

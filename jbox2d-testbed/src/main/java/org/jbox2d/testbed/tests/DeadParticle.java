@@ -17,7 +17,7 @@ public class DeadParticle extends TestbedTest{
 
 	@Override
 	public void initTest(boolean deserialized) {
-		getWorld().setParticleRadius(.15f);
+		getWorld().setParticleRadius(.4761904f);
 	      PolygonShape shape = new PolygonShape();
 	      shape.setAsBox(5, 5);
 	      ParticleGroupDef pd = new ParticleGroupDef();
@@ -47,7 +47,7 @@ public class DeadParticle extends TestbedTest{
 	      bd.type = BodyType.DYNAMIC;
 	      bd.position = new Vec2(0,20);
 	      bd.bullet = true;
-	      bd.setLinearVelocity(new Vec2(0,-400));
+	      bd.setLinearVelocity(new Vec2(0,-1200));
 	      b = getWorld().createBody(bd);
 	      b.createFixture(fd);
 	}
