@@ -167,6 +167,12 @@ public class WheelJoint extends Joint {
   public Vec2 getLocalAxisA() {
     return m_localXAxisA;
   }
+  public float getJointAngle() {
+	    final Body b1 = m_bodyA;
+	    final Body b2 = m_bodyB;
+	    return b2.m_sweep.a - b1.m_sweep.a;
+	  }
+
 
   public float getJointSpeed() {
     return m_bodyA.m_angularVelocity - m_bodyB.m_angularVelocity;

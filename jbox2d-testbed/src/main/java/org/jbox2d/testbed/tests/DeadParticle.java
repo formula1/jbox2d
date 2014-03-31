@@ -17,7 +17,7 @@ public class DeadParticle extends TestbedTest{
 
 	@Override
 	public void initTest(boolean deserialized) {
-		getWorld().setParticleRadius(.4761904f);
+		getWorld().setParticleRadius(.15f);
 	      PolygonShape shape = new PolygonShape();
 	      shape.setAsBox(5, 5);
 	      ParticleGroupDef pd = new ParticleGroupDef();

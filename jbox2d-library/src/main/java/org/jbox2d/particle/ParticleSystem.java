@@ -558,10 +558,11 @@ public class ParticleSystem {
       contact.indexA = a;
       contact.indexB = b;
       contact.flags = m_flagsBuffer.data[a] | m_flagsBuffer.data[b];
-      contact.weight = 1 - d2 * invD * m_inverseDiameter;
-      contact.normal.x = invD * dx;
-      contact.normal.y = invD * dy;
-//      System.out.println("w: "+contact.weight+", n.x: "+contact.normal.x+", n.y: "+contact.normal.y);
+      contact.weight = (d2 == 0)?1:1 - d2 * invD * m_inverseDiameter;
+      contact.normal.x = (dx == 0)?0:invD * dx;
+      contact.normal.y = (dy == 0)?0:invD * dy;
+      if(Float.isNaN(contact.weight))
+    	  System.out.println("create: invD: "+invD+", d2:"+d2+", pa: "+pa+", pb: "+pb);
       m_contactCount++;
     }
   }

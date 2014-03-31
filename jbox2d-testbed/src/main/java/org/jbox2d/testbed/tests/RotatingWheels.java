@@ -30,6 +30,7 @@ public class RotatingWheels extends TestbedTest{
 	WheelJoint pusher;
 	Body left;
 	Body right;
+	WheelJoint orig;
 	@Override
 	public void initTest(boolean deserialized) {
 		if(deserialized) return;
@@ -54,32 +55,11 @@ public class RotatingWheels extends TestbedTest{
 		
 		CircleShape cs = new CircleShape();
 		cs.setRadius(2);
-
-		sd.shape = cs;
-		bd.position = new Vec2(-3,0);
-		bd.type = BodyType.DYNAMIC;
-		Body b1 = getWorld().createBody(bd);
-		b1.createFixture(sd);
-
-		sd.shape = cs;
-		bd.position = new Vec2(3,0);
-		bd.type = BodyType.DYNAMIC;
-		Body b2 = getWorld().createBody(bd);
-		b2.createFixture(sd);
-		
-		WheelJointDef wj = new WheelJointDef();
-		wj.frequencyHz = 2;
-		wj.dampingRatio =1f;
-		wj.initialize(b1, b2, b1.getWorldCenter().add(b2.getWorldCenter()).mul(.5f), new Vec2(1,0));
-		pusher = (WheelJoint)getWorld().createJoint(wj);
-		pusher.enableMotor(true);
-		pusher.setMaxMotorTorque(b1.getInertia()+b2.getInertia());
-		pusher.setMotorSpeed(10);
 		
 		sd.shape = cs;
 		bd.position = new Vec2(-10,7);
 		bd.gravityScale = 0;
-		bd.type = BodyType.STATIC;
+		bd.type = BodyType.DYNAMIC;
 		left = getWorld().createBody(bd);
 		left.createFixture(sd);
 		
@@ -94,21 +74,42 @@ public class RotatingWheels extends TestbedTest{
 		diffang -= right.getAngle();
 		Vec2 normal = new Vec2((float)Math.cos(diffang), (float)Math.sin(diffang));
 
-		
-		wj.initialize(left, right, left.getWorldCenter().add(right.getWorldCenter()).mul(.5f), normal);
+		Vec2 mid = left.getWorldCenter().add(right.getWorldCenter()).mul(.5f);
+//		wj.initialize(left, right, left.getWorldCenter().add(right.getWorldCenter()).mul(.5f), normal);
+		WheelJointDef wj = new WheelJointDef();
+		wj.bodyA = left;
+		wj.bodyB = right;
+		wj.localAxisA.set(normal); 
+		wj.localAnchorA.set(mid.sub(left.getWorldCenter()));
+		wj.localAnchorB.set(mid.sub(right.getWorldCenter()));
 		wj.enableMotor = true;
-		wj.maxMotorTorque = (left.getMass()*right.getMass())*MathUtils.PI*2*60;
+		wj.maxMotorTorque = (left.getInertia()*right.getInertia())*MathUtils.PI*2*60;
 		wj.motorSpeed = 2;
-		getWorld().createJoint(wj);
+		wj.frequencyHz = 3;
+		wj.dampingRatio = 1;
+		orig = (WheelJoint)getWorld().createJoint(wj);
 		
 	}
 	
 	public void step(TestbedSettings settings) {
 	    // TODO Auto-generated method stub
 	    super.step(settings);
-	    
-	    left.applyForceToCenter(new Vec2(20,20).mul(left.getMass()));
-	    right.applyForceToCenter(new Vec2(-20,20).mul(right.getMass()));
+	    float k = .5f;
+	    float damp = .1f;
+	    if(orig.getJointSpeed()+orig.getJointAngle() != 0)
+	    	orig.setMotorSpeed(-1f*((1-damp*k)*orig.getJointSpeed()+k*orig.getJointAngle()));
+/*
+ * Frequency is applying force every moment
+ * -this means accelleration
+ * 
+ * dampening is the amount of speed that is considered to avoid a loop
+ * -if no speed is considered then the it will go infinite
+ * 
+ * dampening's only purpose is to prevent infinite. as such it will get the difference 
+ * 
+ */
+//	    left.applyForceToCenter(new Vec2(20,20).mul(left.getMass()));
+//	    right.applyForceToCenter(new Vec2(-20,20).mul(right.getMass()));
 	}
 
 
