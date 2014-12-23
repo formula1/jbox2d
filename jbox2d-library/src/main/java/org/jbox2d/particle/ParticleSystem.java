@@ -70,6 +70,8 @@ public class ParticleSystem {
   ParticleBufferInt m_flagsBuffer;
   ParticleBuffer<Vec2> m_positionBuffer;
   ParticleBuffer<Vec2> m_velocityBuffer;
+  float[] m_weightBuffer = NULL;
+  float[] m_staticPressureBuffer = NULL;
   float[] m_accumulationBuffer; // temporary values
   Vec2[] m_accumulation2Buffer; // temporary vector values
   float[] m_depthBuffer; // distance from the surface
@@ -156,6 +158,9 @@ public class ParticleSystem {
     m_surfaceTensionStrengthB = 0.2f;
     m_powderStrength = 0.5f;
     m_ejectionStrength = 0.5f;
+    m_staticPressureStrength = 0.2f;
+    m_staticPressureRelaxation = 0.2f;
+    m_staticPressureIterations = 8;
     m_colorMixingStrength = 0.5f;
 
     m_flagsBuffer = new ParticleBufferInt();
@@ -164,6 +169,16 @@ public class ParticleSystem {
     m_colorBuffer = new ParticleBuffer<ParticleColor>(ParticleColor.class);
     m_userDataBuffer = new ParticleBuffer<Object>(Object.class);
   }
+  
+//  public void assertNotSamePosition() {
+//    for (int i = 0; i < m_count; i++) {
+//      Vec2 vi = m_positionBuffer.data[i];
+//      for (int j = i + 1; j < m_count; j++) {
+//        Vec2 vj = m_positionBuffer.data[j];
+//        assert(vi.x != vj.x || vi.y != vj.y);
+//      }
+//    }
+//  }
 
   public int createParticle(ParticleDef def) {
     if (m_count >= m_internalAllocatedCapacity) {
@@ -179,6 +194,10 @@ public class ParticleSystem {
             reallocateBuffer(m_flagsBuffer, m_internalAllocatedCapacity, capacity, false);
         m_positionBuffer.data =
             reallocateBuffer(m_positionBuffer, m_internalAllocatedCapacity, capacity, false);
+        m_weightBuffer = 
+            reallocateBuffer(m_weightBuffer, 0, m_internalAllocatedCapacity, capacity, false);
+        m_staticPressureBuffer = 
+            reallocateBuffer(m_staticPressureBuffer, 0, m_internalAllocatedCapacity, capacity, true);
         m_velocityBuffer.data =
             reallocateBuffer(m_velocityBuffer, m_internalAllocatedCapacity, capacity, false);
         m_accumulationBuffer =
@@ -206,7 +225,13 @@ public class ParticleSystem {
     int index = m_count++;
     m_flagsBuffer.data[index] = def.flags;
     m_positionBuffer.data[index].set(def.position);
+//    assertNotSamePosition();
     m_velocityBuffer.data[index].set(def.velocity);
+    m_weightBuffer[index] = 0;
+    if (m_staticPressureBuffer)
+    {
+      m_staticPressureBuffer[index] = 0;
+    }
     m_groupBuffer[index] = null;
     if (m_depthBuffer != null) {
       m_depthBuffer[index] = 0;
@@ -481,20 +506,9 @@ public class ParticleSystem {
     for (int i = group.m_firstIndex; i < group.m_lastIndex; i++) {
       m_accumulationBuffer[i] = 0;
     }
-    for (int k = 0; k < m_contactCount; k++) {
-      final ParticleContact contact = m_contactBuffer[k];
-      int a = contact.indexA;
-      int b = contact.indexB;
-      if (a >= group.m_firstIndex && a < group.m_lastIndex && b >= group.m_firstIndex
-          && b < group.m_lastIndex) {
-        float w = contact.weight;
-        m_accumulationBuffer[a] += w;
-        m_accumulationBuffer[b] += w;
-      }
-    }
     m_depthBuffer = requestParticleBuffer(m_depthBuffer);
     for (int i = group.m_firstIndex; i < group.m_lastIndex; i++) {
-      float w = m_accumulationBuffer[i];
+      float w = m_weightBuffer[i];
       m_depthBuffer[i] = w < 0.8f ? 0 : Float.MAX_VALUE;
     }
     int interationCount = group.getParticleCount();
@@ -536,11 +550,13 @@ public class ParticleSystem {
   }
 
   public void addContact(int a, int b) {
+    assert(a != b);
     Vec2 pa = m_positionBuffer.data[a];
     Vec2 pb = m_positionBuffer.data[b];
     float dx = pb.x - pa.x;
     float dy = pb.y - pa.y;
     float d2 = dx * dx + dy * dy;
+//    assert(d2 != 0);
     if (d2 < m_squaredDiameter) {
       if (m_contactCount >= m_contactCapacity) {
         int oldCapacity = m_contactCapacity;
@@ -551,7 +567,7 @@ public class ParticleSystem {
                 newCapacity);
         m_contactCapacity = newCapacity;
       }
-      float invD = MathUtils.sqrt(1 / d2);
+      float invD = d2 != 0 ? MathUtils.sqrt(1 / d2) : Float.MAX_VALUE;
       ParticleContact contact = m_contactBuffer[m_contactCount];
       contact.indexA = a;
       contact.indexB = b;
@@ -697,7 +713,7 @@ public class ParticleSystem {
       v.y += gravityy;
       float v2 = v.x * v.x + v.y * v.y;
       if (v2 > criticalVelocytySquared) {
-        float a = MathUtils.sqrt(criticalVelocytySquared / v2);
+        float a = v2 == 0 ? Float.MAX_VALUE : MathUtils.sqrt(criticalVelocytySquared / v2);
         v.x *= a;
         v.y *= a;
       }
@@ -717,6 +733,7 @@ public class ParticleSystem {
     }
     updateBodyContacts();
     updateContacts(false);
+    computeWeight();
     if ((m_allParticleFlags & ParticleType.b2_viscousParticle) != 0) {
       solveViscous(step);
     }
@@ -738,21 +755,96 @@ public class ParticleSystem {
     if ((m_allParticleFlags & ParticleType.b2_colorMixingParticle) != 0) {
       solveColorMixing(step);
     }
+    if (m_allParticleFlags & b2_staticPressureParticle){
+      SolveStaticPressure(subStep);
+    }
     solvePressure(step);
     solveDamping(step);
+    if (m_allParticleFlags & k_extraDampingFlags){
+      solveExtraDamping(subStep);
+    }
   }
 
   void solvePressure(TimeStep step) {
+    // calculates pressure as a linear function of density
+    float criticalPressure = GetCriticalPressure(step);
+    float pressurePerWeight = m_pressureStrength * criticalPressure;
+    float maxPressure = b2_maxParticlePressure * criticalPressure;
+    for (int i = 0; i < m_count; i++) {
+      float w = m_weightBuffer[i];
+      float h = pressurePerWeight * b2Max(0.0f, w - b2_minParticleWeight);
+      m_accumulationBuffer[i] = b2Min(h, maxPressure);
+    }
+    // ignores particles which have their own repulsive force
+    if ((m_allParticleFlags & k_noPressureFlags) != 0) {
+      for (int i = 0; i < m_count; i++) {
+        if ((m_flagsBuffer.data[i] & k_noPressureFlags) != 0) {
+          m_accumulationBuffer[i] = 0;
+        }
+      }
+    }
+	  // static pressure
+    if (m_allParticleFlags & staticPressureParticleFlag){
+      float w = m_accumulationBuffer[i];
+      float h = pressurePerWeight * MathUtils.Max(
+        0.0f, 
+        b2Min(
+          w, 
+          Settings.maxParticleWeight
+        ) - Settings.minParticleWeight
+      );
+      m_accumulationBuffer[i] = h;
+      Assert(m_staticPressureBuffer);
+      for (int i = 0; i < m_count; i++){
+        if (m_flagsBuffer.data[i] & staticPressureParticleFlag){
+          m_accumulationBuffer[i] += m_staticPressureBuffer[i];
+        }
+      }
+    }
+    // applies pressure between each particles in contact
+    float velocityPerPressure = step.dt / (m_density * m_particleDiameter);
+    for (int k = 0; k < m_bodyContactCount; k++) {
+      ParticleBodyContact contact = m_bodyContactBuffer[k];
+      int a = contact.index;
+      Body b = contact.body;
+      float w = contact.weight;
+      float m = contact.mass;
+      Vec2 n = contact.normal;
+      Vec2 p = m_positionBuffer.data[a];
+      float h = m_accumulationBuffer[a] + pressurePerWeight * w;
+      final Vec2 f = tempVec;
+      final float coef = velocityPerPressure * w * m * h;
+      f.x = coef * n.x;
+      f.y = coef * n.y;
+      final Vec2 velData = m_velocityBuffer.data[a];
+      final float particleInvMass = getParticleInvMass();
+      velData.x -= particleInvMass * f.x;
+      velData.y -= particleInvMass * f.y;
+      b.applyLinearImpulse(f, p, true);
+    }
+    for (int k = 0; k < m_contactCount; k++) {
+      ParticleContact contact = m_contactBuffer[k];
+      int a = contact.indexA;
+      int b = contact.indexB;
+      float w = contact.weight;
+      Vec2 n = contact.normal;
+      float h = m_accumulationBuffer[a] + m_accumulationBuffer[b];
+      final float fx = velocityPerPressure * w * h * n.x;
+      final float fy = velocityPerPressure * w * h * n.y;
+      final Vec2 velDataA = m_velocityBuffer.data[a];
+      final Vec2 velDataB = m_velocityBuffer.data[b];
+      velDataA.x -= fx;
+      velDataA.y -= fy;
+      velDataB.x += fx;
+      velDataB.y += fy;
+    }
+  }
+
+  void solveStaticPressure(TimeStep step) {
     // calculates the sum of contact-weights for each particle
     // that means dimensionless density
     for (int i = 0; i < m_count; i++) {
       m_accumulationBuffer[i] = 0;
-    }
-    for (int k = 0; k < m_bodyContactCount; k++) {
-      ParticleBodyContact contact = m_bodyContactBuffer[k];
-      int a = contact.index;
-      float w = contact.weight;
-      m_accumulationBuffer[a] += w;
     }
     for (int k = 0; k < m_contactCount; k++) {
       ParticleContact contact = m_contactBuffer[k];
@@ -774,10 +866,8 @@ public class ParticleSystem {
     float pressurePerWeight = m_pressureStrength * getCriticalPressure(step);
     for (int i = 0; i < m_count; i++) {
       float w = m_accumulationBuffer[i];
-      float h =
-          pressurePerWeight
-              * MathUtils.max(0.0f, MathUtils.min(w, Settings.maxParticleWeight)
-                  - Settings.minParticleWeight);
+      float h = (wh + pressurePerWeight * (w - Settings.minParticleWeight)) / (w + relaxation);
+      h = MathUtils.max(0.0f, MathUtils.min(w,Settings.maxParticleWeight));
       m_accumulationBuffer[i] = h;
     }
     // applies pressure between each particles in contact
@@ -871,7 +961,31 @@ public class ParticleSystem {
       }
     }
   }
-
+  
+  void solveExtraDamping(TimeStep step){
+    // Applies additional damping force between bodies and particles which can
+    // produce strong repulsive force. Applying damping force multiple times
+    // is effective in suppressing vibration.
+    for (int k = 0; k < m_bodyContactCount; k++){
+      final ParticleBodyContact contact = m_bodyContactBuffer[k];
+      int a = contact.index;
+      if (m_flagsBuffer.data[a] & k_extraDampingFlags){
+        Body b = contact.body;
+        float m = contact.mass;
+        Vec2 n = contact.normal;
+        Vec2 p = m_positionBuffer.data[a];
+        Vec2 v = 
+          b.getLinearVelocityFromWorldPoint(p)
+          .sub(m_velocityBuffer.data[a]);
+        float vn = v.dot(n);
+        if (vn < 0){
+          Vec2 f = n.mul(0.5f * m * vn);
+          m_velocityBuffer.data[a].addLocal(f.mul(GetParticleInvMass()));
+          b.applyLinearImpulse(-f, p, true);
+        }
+      }
+    }
+  }
   public void solveWall(TimeStep step) {
     for (int i = 0; i < m_count; i++) {
       if ((m_flagsBuffer.data[i] & ParticleType.b2_wallParticle) != 0) {
@@ -932,7 +1046,7 @@ public class ParticleSystem {
         float rs = Vec2.cross(oa, pa) + Vec2.cross(ob, pb) + Vec2.cross(oc, pc);
         float rc = Vec2.dot(oa, pa) + Vec2.dot(ob, pb) + Vec2.dot(oc, pc);
         float r2 = rs * rs + rc * rc;
-        float invR = MathUtils.sqrt(1f / r2);
+        float invR = r2 == 0 ? Float.MAX_VALUE : MathUtils.sqrt(1f / r2);
         rs *= invR;
         rc *= invR;
         final float strength = elasticStrength * triad.strength;
@@ -968,6 +1082,7 @@ public class ParticleSystem {
         final float dy = pb.y - pa.y;
         float r0 = pair.distance;
         float r1 = MathUtils.sqrt(dx * dx + dy * dy);
+        if (r1 == 0) r1 = Float.MAX_VALUE;
         float strength = springStrength * pair.strength;
         final float fx = strength * (r0 - r1) / r1 * dx;
         final float fy = strength * (r0 - r1) / r1 * dy;
@@ -984,7 +1099,6 @@ public class ParticleSystem {
   void solveTensile(final TimeStep step) {
     m_accumulation2Buffer = requestParticleBuffer(Vec2.class, m_accumulation2Buffer);
     for (int i = 0; i < m_count; i++) {
-      m_accumulationBuffer[i] = 0;
       m_accumulation2Buffer[i].setZero();
     }
     for (int k = 0; k < m_contactCount; k++) {
@@ -994,8 +1108,6 @@ public class ParticleSystem {
         int b = contact.indexB;
         float w = contact.weight;
         Vec2 n = contact.normal;
-        m_accumulationBuffer[a] += w;
-        m_accumulationBuffer[b] += w;
         final Vec2 a2A = m_accumulation2Buffer[a];
         final Vec2 a2B = m_accumulation2Buffer[b];
         final float inter = (1 - w) * w;
@@ -1016,7 +1128,7 @@ public class ParticleSystem {
         Vec2 n = contact.normal;
         final Vec2 a2A = m_accumulation2Buffer[a];
         final Vec2 a2B = m_accumulation2Buffer[b];
-        float h = m_accumulationBuffer[a] + m_accumulationBuffer[b];
+        float h = m_weightBuffer[a] + m_weightBuffer[b];
         final float sx = a2B.x - a2A.x;
         final float sy = a2B.y - a2A.y;
         float fn = (strengthA * (h - 2) + strengthB * (sx * n.x + sy * n.y)) * w;
@@ -1081,28 +1193,6 @@ public class ParticleSystem {
   void solvePowder(final TimeStep step) {
     float powderStrength = m_powderStrength * getCriticalVelocity(step);
     float minWeight = 1.0f - Settings.particleStride;
-    for (int k = 0; k < m_bodyContactCount; k++) {
-      final ParticleBodyContact contact = m_bodyContactBuffer[k];
-      int a = contact.index;
-      if ((m_flagsBuffer.data[a] & ParticleType.b2_powderParticle) != 0) {
-        float w = contact.weight;
-        if (w > minWeight) {
-          Body b = contact.body;
-          float m = contact.mass;
-          Vec2 p = m_positionBuffer.data[a];
-          Vec2 n = contact.normal;
-          final Vec2 f = tempVec;
-          final Vec2 va = m_velocityBuffer.data[a];
-          final float inter = powderStrength * m * (w - minWeight);
-          final float pInvMass = getParticleInvMass();
-          f.x = inter * n.x;
-          f.y = inter * n.y;
-          va.x -= pInvMass * f.x;
-          va.y -= pInvMass * f.y;
-          b.applyLinearImpulse(f, p, true);
-        }
-      }
-    }
     for (int k = 0; k < m_contactCount; k++) {
       final ParticleContact contact = m_contactBuffer[k];
       if ((contact.flags & ParticleType.b2_powderParticle) != 0) {
@@ -1196,6 +1286,9 @@ public class ParticleSystem {
           m_positionBuffer.data[newCount].set(m_positionBuffer.data[i]);
           m_velocityBuffer.data[newCount].set(m_velocityBuffer.data[i]);
           m_groupBuffer[newCount] = m_groupBuffer[i];
+          if (m_staticPressureBuffer){
+            m_staticPressureBuffer[newCount] = m_staticPressureBuffer[i];
+          }
           if (m_depthBuffer != null) {
             m_depthBuffer[newCount] = m_depthBuffer[i];
           }
@@ -1405,6 +1498,9 @@ public class ParticleSystem {
     if (m_userDataBuffer.data != null) {
       BufferUtils.rotate(m_userDataBuffer.data, start, mid, end);
     }
+    if(m_staticPressureBuffer.data != null){
+      BufferUtils.rotate(m_staticPressureBuffer, start, mid, end);
+    }
 
     // update proxies
     for (int k = 0; k < m_proxyCount; k++) {
@@ -1480,6 +1576,13 @@ public class ParticleSystem {
 
   public float getParticleRadius() {
     return m_particleDiameter / 2;
+  }
+  
+  public void setParticleStaticPressureIterations(int iterations){
+    m_staticPressureIterations = iterations;
+  }
+  public int getParticleStaticPressureIterations(){
+    return m_staticPressureIterations;
   }
 
   float getCriticalVelocity(final TimeStep step) {
@@ -1679,6 +1782,7 @@ public class ParticleSystem {
     final float vx = point2.x - point1.x;
     final float vy = point2.y - point1.y;
     float v2 = vx * vx + vy * vy;
+    if (v2 == 0) v2 = Float.MAX_VALUE;
     for (int proxy = firstProxy; proxy < lastProxy; ++proxy) {
       int i = m_proxyBuffer[proxy].index;
       final Vec2 posI = m_positionBuffer.data[i];
@@ -1733,6 +1837,28 @@ public class ParticleSystem {
       }
     }
     return 0.5f * getParticleMass() * sum_v2;
+  }
+
+  public void computeWeight() {
+    // calculates the sum of contact-weights for each particle
+    // that means dimensionless density
+    for(int k=0;k<m_weightBuffer.length;k++){
+      m_weightBuffer[k] = 0;
+    }
+    for (int k = 0; k < m_bodyContactCount; k++){
+      final ParticleBodyContact contact = m_bodyContactBuffer[k];
+      int a = contact.index;
+      float w = contact.weight;
+      m_weightBuffer[a] += w;
+    }
+    for (int k = 0; k < m_contactCount; k++){
+      final ParticleContact contact = m_contactBuffer[k];
+      int a = contact.indexA;
+      int b = contact.indexB;
+      float w = contact.weight;
+      m_weightBuffer[a] += w;
+      m_weightBuffer[b] += w;
+    }
   }
 
   // reallocate a buffer
@@ -2028,6 +2154,7 @@ public class ParticleSystem {
               final float rpx = ap.x - bp.x;
               final float rpy = ap.y - bp.y;
               float rpn = rpx * n.y - rpy * n.x;
+              float invM = invAm + invBm + invBI * rpn * rpn;
               if (system.m_bodyContactCount >= system.m_bodyContactCapacity) {
                 int oldCapacity = system.m_bodyContactCapacity;
                 int newCapacity =
@@ -2045,7 +2172,7 @@ public class ParticleSystem {
               contact.weight = 1 - d * system.m_inverseDiameter;
               contact.normal.x = -n.x;
               contact.normal.y = -n.y;
-              contact.mass = 1 / (invAm + invBm + invBI * rpn * rpn);
+              contact.mass = invM > 0 ? 1 / invM : 0;
               system.m_bodyContactCount++;
             }
           }
@@ -2124,6 +2251,12 @@ public class ParticleSystem {
               final Vec2 f = tempVec2;
               f.x = fdn * b.x;
               f.y = fdn * b.y;
+              // If density of the body is smaller than particle,
+              // the reactive force to it will be discounted.
+              float32 densityRatio = fixture.GetDensity() * system.m_inverseDensity;
+              if (densityRatio < 1){
+                f *= densityRatio;
+              }
               body.applyLinearImpulse(f, p, true);
             }
           }
